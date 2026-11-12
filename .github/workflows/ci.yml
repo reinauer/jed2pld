@@ -1,0 +1,80 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+            python: '3.10'
+          - os: ubuntu-latest
+            compiler: clang
+            python: '3.x'
+          - os: macos-latest
+            compiler: clang
+            python: '3.x'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build and test
+        run: make test CC=${{ matrix.compiler }} CFLAGS='-O2 -Wall -Wextra -Werror -std=c11'
+      - name: Package binary
+        run: tar -czf jed2pld.tar.gz jed2pld README.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jed2pld-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.compiler }}
+          path: jed2pld.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows / MinGW GCC
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-python
+      - name: Build and test
+        shell: msys2 {0}
+        run: make test CC=gcc PYTHON=python EXEEXT=.exe CFLAGS='-O2 -Wall -Wextra -Werror -std=c11'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jed2pld-windows-x64
+          path: jed2pld.exe
+          if-no-files-found: error
+
+  sanitizers:
+    name: Linux / ASan and UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+      - name: Run instrumented regression tests and fuzzing
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: make fuzz-sanitize CC=clang
